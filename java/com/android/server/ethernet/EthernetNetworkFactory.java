@@ -402,6 +402,7 @@ class EthernetNetworkFactory {
     }
 
     public synchronized void stop() {
+        Log.d(TAG, "stop ethernet");
         NetworkUtils.stopDhcp(mIface);
         // ConnectivityService will only forget our NetworkAgent if we send it a NetworkInfo object
         // with a state of DISCONNECTED or SUSPENDED. So we can't simply clear our NetworkInfo here:
@@ -411,9 +412,15 @@ class EthernetNetworkFactory {
         // and instead use isConnectedOrConnecting().
         mNetworkInfo.setDetailedState(DetailedState.DISCONNECTED, null, mHwAddr);
         mLinkUp = false;
+        mLinkProperties.clear();
         updateAgent();
         mLinkProperties = new LinkProperties();
         mNetworkAgent = null;
+        try {
+            mNMService.clearInterfaceAddresses(mIface);
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to clear addresses or disable ipv6" + e);
+        }
         setInterfaceInfoLocked("", null);
         mNetworkInfo = new NetworkInfo(ConnectivityManager.TYPE_ETHERNET, 0, NETWORK_TYPE, "");
         mFactory.unregister();
