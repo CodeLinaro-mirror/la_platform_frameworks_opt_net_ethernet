@@ -38,7 +38,8 @@ public final class EthernetService extends SystemService {
 
     @Override
     public void onBootPhase(int phase) {
-        if (phase == SystemService.PHASE_SYSTEM_SERVICES_READY) {
+        if (phase == SystemService.PHASE_SERVICES_DEFER_COMPLETED
+                || phase == SystemService.PHASE_SYSTEM_SERVICES_READY) {
             mImpl.start();
         }
     }
