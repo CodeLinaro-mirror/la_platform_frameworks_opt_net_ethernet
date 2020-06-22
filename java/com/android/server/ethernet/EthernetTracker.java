@@ -70,6 +70,8 @@ final class EthernetTracker {
     private final static String TAG = EthernetTracker.class.getSimpleName();
     private final static boolean DBG = EthernetNetworkFactory.DBG;
 
+    private static final String TEST_IFACE_REGEXP = TEST_TAP_PREFIX + "\\d+";
+
     /**
      * Interface names we track. This is a product-dependent regular expression, plus,
      * if setIncludeTestInterfaces is true, any test interfaces.
@@ -193,9 +195,11 @@ final class EthernetTracker {
     }
 
     public void setIncludeTestInterfaces(boolean include) {
-        mIncludeTestInterfaces = include;
-        updateIfaceMatchRegexp();
-        trackAvailableInterfaces();
+        mHandler.post(() -> {
+            mIncludeTestInterfaces = include;
+            updateIfaceMatchRegexp();
+            mHandler.post(() -> trackAvailableInterfaces());
+        });
     }
 
     public void requestTetheredInterface(ITetheredInterfaceCallback callback) {
@@ -296,7 +300,8 @@ final class EthernetTracker {
             // Try to resolve using mac address
             nc = mNetworkCapabilities.get(hwAddress);
             if (nc == null) {
-                nc = createDefaultNetworkCapabilities();
+                final boolean isTestIface = iface.matches(TEST_IFACE_REGEXP);
+                nc = createDefaultNetworkCapabilities(isTestIface);
             }
         }
 
@@ -307,7 +312,7 @@ final class EthernetTracker {
                 ipConfiguration = createDefaultIpConfiguration();
             }
 
-            Log.d(TAG, "Started tracking interface " + iface);
+            Log.d(TAG, "Tracking interface in client mode: " + iface);
             mFactory.addInterface(iface, hwAddress, nc, ipConfiguration);
         } else {
             maybeUpdateServerModeInterfaceState(iface, true);
@@ -349,6 +354,9 @@ final class EthernetTracker {
     private void maybeUpdateServerModeInterfaceState(String iface, boolean available) {
         if (available == mTetheredInterfaceWasAvailable || !iface.equals(mDefaultInterface)) return;
 
+        Log.d(TAG, (available ? "Tracking" : "No longer tracking")
+                + " interface in server mode: " + iface);
+
         final int pendingCbs = mTetheredInterfaceRequests.beginBroadcast();
         for (int i = 0; i < pendingCbs; i++) {
             ITetheredInterfaceCallback item = mTetheredInterfaceRequests.getBroadcastItem(i);
@@ -363,13 +371,17 @@ final class EthernetTracker {
     }
 
     private void maybeTrackInterface(String iface) {
-        if (DBG) Log.i(TAG, "maybeTrackInterface " + iface);
-        // If we don't already track this interface, and if this interface matches
-        // our regex, start tracking it.
-        if (!iface.matches(mIfaceMatch) || mFactory.hasInterface(iface)
-                || iface.equals(mDefaultInterface)) {
+        if (!iface.matches(mIfaceMatch)) {
             return;
         }
+
+        // If we don't already track this interface, and if this interface matches
+        // our regex, start tracking it.
+        if (mFactory.hasInterface(iface) || iface.equals(mDefaultInterface)) {
+            if (DBG) Log.w(TAG, "Ignoring already-tracked interface " + iface);
+            return;
+        }
+        if (DBG) Log.i(TAG, "maybeTrackInterface: " + iface);
 
         // TODO: avoid making an interface default if it has configured NetworkCapabilities.
         if (mDefaultInterface == null) {
@@ -448,13 +460,19 @@ final class EthernetTracker {
         }
     }
 
-    private static NetworkCapabilities createDefaultNetworkCapabilities() {
+    private static NetworkCapabilities createDefaultNetworkCapabilities(boolean isTestIface) {
         NetworkCapabilities nc = createNetworkCapabilities(false /* clear default capabilities */);
-        nc.addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
         nc.addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_RESTRICTED);
         nc.addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_METERED);
         nc.addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_ROAMING);
         nc.addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_CONGESTED);
+        nc.addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED);
+
+        if (isTestIface) {
+            nc.addTransportType(NetworkCapabilities.TRANSPORT_TEST);
+        } else {
+            nc.addCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET);
+        }
 
         return nc;
     }
@@ -533,6 +551,11 @@ final class EthernetTracker {
                 }
             }
         }
+        // Ethernet networks have no way to update the following capabilities, so they always
+        // have them.
+        nc.addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_ROAMING);
+        nc.addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_CONGESTED);
+        nc.addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_SUSPENDED);
 
         return nc;
     }
@@ -595,7 +618,7 @@ final class EthernetTracker {
         final String match = mContext.getResources().getString(
                 com.android.internal.R.string.config_ethernet_iface_regex);
         mIfaceMatch = mIncludeTestInterfaces
-                ? "(" + match + "|" + TEST_TAP_PREFIX + "\\d+)"
+                ? "(" + match + "|" + TEST_IFACE_REGEXP + ")"
                 : match;
         Log.d(TAG, "Interface match regexp set to '" + mIfaceMatch + "'");
     }
