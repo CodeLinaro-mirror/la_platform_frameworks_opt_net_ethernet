@@ -65,6 +65,7 @@ public class EthernetNetworkFactory extends NetworkFactory {
 
     private final static int NETWORK_SCORE = 70;
     private static final String NETWORK_TYPE = "Ethernet";
+    private static final Object mSync = new Object();
 
     private final ConcurrentHashMap<String, NetworkInterfaceState> mTrackingInterfaces =
             new ConcurrentHashMap<>();
@@ -256,6 +257,7 @@ public class EthernetNetworkFactory extends NetworkFactory {
         private @Nullable IpClientCallbacksImpl mIpClientCallback;
         private @Nullable NetworkAgent mNetworkAgent;
         private @Nullable IpConfiguration mIpConfig;
+        private boolean mIsIpClientStopping = false;
 
         /**
          * An object to contain all transport type information, including base network score and
@@ -325,17 +327,29 @@ public class EthernetNetworkFactory extends NetworkFactory {
 
             @Override
             public void onProvisioningSuccess(LinkProperties newLp) {
-                mHandler.post(() -> onIpLayerStarted(newLp));
+                synchronized (mSync) {
+                    if(mIsIpClientStopping == false && mIpClient != null) {
+                        mHandler.post(() -> onIpLayerStarted(newLp));
+                    }
+                }
             }
 
             @Override
             public void onProvisioningFailure(LinkProperties newLp) {
-                mHandler.post(() -> onIpLayerStopped(newLp));
+                synchronized (mSync) {
+                    if(mIsIpClientStopping == false && mIpClient != null) {
+                        mHandler.post(() -> onIpLayerStopped(newLp));
+                    }
+                }
             }
 
             @Override
             public void onLinkPropertiesChange(LinkProperties newLp) {
-                mHandler.post(() -> updateLinkProperties(newLp));
+                synchronized (mSync) {
+                    if(mIsIpClientStopping == false && mIpClient != null) {
+                        mHandler.post(() -> updateLinkProperties(newLp));
+                    }
+                }
             }
 
             @Override
@@ -517,10 +531,16 @@ public class EthernetNetworkFactory extends NetworkFactory {
 
         void stop() {
             // Invalidate all previous start requests
+            synchronized (mSync) {
+                mIsIpClientStopping = true;
+            }
             if (mIpClient != null) {
                 shutdownIpClient(mIpClient);
                 mIpClientCallback.awaitIpClientShutdown();
                 mIpClient = null;
+            }
+            synchronized (mSync) {
+                mIsIpClientStopping = false;
             }
             mIpClientCallback = null;
 

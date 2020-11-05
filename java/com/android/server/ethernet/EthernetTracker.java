@@ -35,6 +35,7 @@ import android.os.INetworkManagementService;
 import android.os.RemoteCallbackList;
 import android.os.RemoteException;
 import android.os.ServiceManager;
+import android.provider.Settings;
 import android.text.TextUtils;
 import android.util.ArrayMap;
 import android.util.Log;
@@ -110,6 +111,8 @@ final class EthernetTracker {
         }
     }
 
+    private boolean mStaticIpDisabled;
+
     EthernetTracker(Context context, Handler handler) {
         mContext = context;
         mHandler = handler;
@@ -121,11 +124,16 @@ final class EthernetTracker {
         // Interface match regex.
         updateIfaceMatchRegexp();
 
-        // Read default Ethernet interface configuration from resources
-        final String[] interfaceConfigs = context.getResources().getStringArray(
-                com.android.internal.R.array.config_ethernet_interfaces);
-        for (String strConfig : interfaceConfigs) {
-            parseEthernetConfig(strConfig);
+        mStaticIpDisabled = (Settings.Global.getInt(context.getContentResolver(),
+                             "disable_static_ip_assignment", 0) == 1);
+
+        if (!mStaticIpDisabled) {
+            // Read default Ethernet interface configuration from resources
+            final String[] interfaceConfigs = context.getResources().getStringArray(
+                    com.android.internal.R.array.config_ethernet_interfaces);
+            for (String strConfig : interfaceConfigs) {
+                parseEthernetConfig(strConfig);
+            }
         }
 
         mConfigStore = new EthernetConfigStore();
