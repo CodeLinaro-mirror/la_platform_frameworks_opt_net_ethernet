@@ -252,6 +252,11 @@ public class EthernetNetworkFactory extends NetworkFactory {
             public void onLinkPropertiesChange(LinkProperties newLp) {
                 mHandler.post(() -> updateLinkProperties(newLp));
             }
+
+            @Override
+            public void onReachabilityLost(String logMsg) {
+                mHandler.post(() -> updateNeighborLostEvent(logMsg));
+            }
         };
 
         NetworkInterfaceState(String ifaceName, String hwAddress, Handler handler, Context context,
@@ -342,6 +347,18 @@ public class EthernetNetworkFactory extends NetworkFactory {
             if (mNetworkAgent != null) {
                 mNetworkAgent.sendLinkProperties(linkProperties);
             }
+        }
+
+        void updateNeighborLostEvent(String logMsg) {
+            Log.d(TAG, "updateNeighborLostEvent " + logMsg);
+            // Reachability lost will be seen only if the gateway is not reachable.
+            // Since etherert FW doesn't have the mechanism to scan for new networks
+            // like WiFi, simply restart.
+            // If there is a better network, that will become default and apps
+            // will be able to use internet. If ethernet gets connected again,
+            // and has backhaul connectivity, it will become default.
+            start();
+            stop();
         }
 
         /** Returns true if state has been modified */
