@@ -167,8 +167,8 @@ public class EthernetNetworkFactory extends NetworkFactory {
     }
 
     private void updateCapabilityFilter() {
-        NetworkCapabilities capabilitiesFilter =
-                NetworkCapabilities.Builder.withoutDefaultCapabilities()
+        NetworkCapabilities capabilitiesFilter = new NetworkCapabilities.Builder()
+                .clearAll()
                 .addTransportType(NetworkCapabilities.TRANSPORT_ETHERNET)
                 .build();
 

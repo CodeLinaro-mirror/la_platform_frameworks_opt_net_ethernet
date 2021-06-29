@@ -107,7 +107,7 @@ public class EthernetTrackerTest {
 
     private NetworkCapabilities.Builder makeEthernetCapabilitiesBuilder(boolean clearAll) {
         final NetworkCapabilities.Builder builder =
-                clearAll ? NetworkCapabilities.Builder.withoutDefaultCapabilities()
+                clearAll ? new NetworkCapabilities.Builder().clearAll()
                         : new NetworkCapabilities.Builder();
         return builder.addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_ROAMING)
                 .addCapability(NetworkCapabilities.NET_CAPABILITY_NOT_CONGESTED)
