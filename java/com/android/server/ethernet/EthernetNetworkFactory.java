@@ -20,6 +20,7 @@ import android.annotation.NonNull;
 import android.annotation.Nullable;
 import android.content.Context;
 import android.net.ConnectivityManager;
+import android.net.EthernetManager;
 import android.net.EthernetNetworkSpecifier;
 import android.net.IEthernetNetworkManagementListener;
 import android.net.EthernetNetworkManagementException;
@@ -176,14 +177,30 @@ public class EthernetNetworkFactory extends NetworkFactory {
             return;
         }
 
+        final NetworkCapabilities nc = new NetworkCapabilities.Builder(capabilities)
+                .setNetworkSpecifier(new EthernetNetworkSpecifier(ifaceName))
+                .build();
+
         if (DBG) {
-            Log.d(TAG, "addInterface, iface: " + ifaceName + ", capabilities: " + capabilities);
+            Log.d(TAG, "addInterface, iface: " + ifaceName + ", capabilities: " + nc);
         }
 
         final NetworkInterfaceState iface = new NetworkInterfaceState(
-                ifaceName, hwAddress, mHandler, mContext, ipConfig, capabilities, this, mDeps);
+                ifaceName, hwAddress, mHandler, mContext, ipConfig, nc, this, mDeps);
         mTrackingInterfaces.put(ifaceName, iface);
         updateCapabilityFilter();
+    }
+
+    @VisibleForTesting
+    protected int getInterfaceState(@NonNull String iface) {
+        final NetworkInterfaceState interfaceState = mTrackingInterfaces.get(iface);
+        if (interfaceState == null) {
+            return EthernetManager.STATE_ABSENT;
+        } else if (!interfaceState.mLinkUp) {
+            return EthernetManager.STATE_LINK_DOWN;
+        } else {
+            return EthernetManager.STATE_LINK_UP;
+        }
     }
 
     /**
@@ -270,7 +287,8 @@ public class EthernetNetworkFactory extends NetworkFactory {
         return iface.updateLinkState(up, listener);
     }
 
-    boolean hasInterface(String ifaceName) {
+    @VisibleForTesting
+    protected boolean hasInterface(String ifaceName) {
         return mTrackingInterfaces.containsKey(ifaceName);
     }
 
