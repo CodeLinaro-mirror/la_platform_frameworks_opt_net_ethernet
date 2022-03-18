@@ -86,6 +86,9 @@ public class EthernetTracker {
      * if setIncludeTestInterfaces is true, any test interfaces.
      */
     private String mIfaceMatch;
+    /**
+     * Track test interfaces if true, don't track otherwise.
+     */
     private boolean mIncludeTestInterfaces = false;
 
     /** Mapping between {iface name | mac address} -> {NetworkCapabilities} */
@@ -229,18 +232,20 @@ public class EthernetTracker {
 
     @VisibleForTesting(visibility = PACKAGE)
     protected void updateConfiguration(@NonNull final String iface,
-            @NonNull final StaticIpConfiguration staticIpConfig,
-            @NonNull final NetworkCapabilities capabilities,
+            @NonNull final IpConfiguration ipConfig,
+            @Nullable final NetworkCapabilities capabilities,
             @Nullable final IEthernetNetworkManagementListener listener) {
         if (DBG) {
             Log.i(TAG, "updateConfiguration, iface: " + iface + ", capabilities: " + capabilities
-                    + ", staticIpConfig: " + staticIpConfig);
+                    + ", ipConfig: " + ipConfig);
         }
-        final IpConfiguration ipConfig = createIpConfiguration(staticIpConfig);
-        writeIpConfiguration(iface, ipConfig);
-        mNetworkCapabilities.put(iface, capabilities);
+        final IpConfiguration localIpConfig = new IpConfiguration(ipConfig);
+        writeIpConfiguration(iface, localIpConfig);
+        if (null != capabilities) {
+            mNetworkCapabilities.put(iface, capabilities);
+        }
         mHandler.post(() -> {
-            mFactory.updateInterface(iface, ipConfig, capabilities, listener);
+            mFactory.updateInterface(iface, localIpConfig, capabilities, listener);
             broadcastInterfaceStateChange(iface);
         });
     }
@@ -715,13 +720,9 @@ public class EthernetTracker {
         return createIpConfiguration(staticIpConfigBuilder.build());
     }
 
-    static IpConfiguration createIpConfiguration(
+    private static IpConfiguration createIpConfiguration(
             @NonNull final StaticIpConfiguration staticIpConfig) {
-        final IpConfiguration ret = new IpConfiguration();
-        ret.setIpAssignment(IpAssignment.STATIC);
-        ret.setProxySettings(ProxySettings.NONE);
-        ret.setStaticIpConfiguration(staticIpConfig);
-        return ret;
+        return new IpConfiguration.Builder().setStaticIpConfiguration(staticIpConfig).build();
     }
 
     private IpConfiguration getOrCreateIpConfiguration(String iface) {
@@ -740,6 +741,17 @@ public class EthernetTracker {
                 ? "(" + match + "|" + TEST_IFACE_REGEXP + ")"
                 : match;
         Log.d(TAG, "Interface match regexp set to '" + mIfaceMatch + "'");
+    }
+
+    /**
+     * Validate if a given interface is valid for testing.
+     *
+     * @param iface the name of the interface to validate.
+     * @return {@code true} if test interfaces are enabled and the given {@code iface} has a test
+     * interface prefix, {@code false} otherwise.
+     */
+    public boolean isValidTestInterface(@NonNull final String iface) {
+        return mIncludeTestInterfaces && iface.matches(TEST_IFACE_REGEXP);
     }
 
     private void postAndWaitForRunnable(Runnable r) {
