@@ -25,20 +25,26 @@ import static org.junit.Assert.assertTrue;
 import static org.junit.Assert.fail;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
+import static org.mockito.ArgumentMatchers.anyInt;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.doReturn;
+import static org.mockito.Mockito.reset;
+import static org.mockito.Mockito.spy;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
 
 import android.content.Context;
 import android.content.res.Resources;
+import android.net.EthernetManager;
 import android.net.InetAddresses;
-import android.net.IEthernetNetworkManagementListener;
+import android.net.INetworkInterfaceOutcomeReceiver;
+import android.net.IEthernetServiceListener;
 import android.net.INetd;
 import android.net.IpConfiguration;
 import android.net.IpConfiguration.IpAssignment;
 import android.net.IpConfiguration.ProxySettings;
+import android.net.InterfaceConfigurationParcel;
 import android.net.LinkAddress;
 import android.net.NetworkCapabilities;
 import android.net.StaticIpConfiguration;
@@ -48,7 +54,7 @@ import android.os.RemoteException;
 import androidx.test.filters.SmallTest;
 import androidx.test.runner.AndroidJUnit4;
 
-import com.android.internal.R;
+import com.android.connectivity.resources.R;
 import com.android.testutils.HandlerUtils;
 
 import org.junit.After;
@@ -67,13 +73,13 @@ public class EthernetTrackerTest {
     private static final String TEST_IFACE = "test123";
     private static final int TIMEOUT_MS = 1_000;
     private static final String THREAD_NAME = "EthernetServiceThread";
-    private static final IEthernetNetworkManagementListener NULL_LISTENER = null;
+    private static final INetworkInterfaceOutcomeReceiver NULL_LISTENER = null;
     private EthernetTracker tracker;
     private HandlerThread mHandlerThread;
     @Mock private Context mContext;
     @Mock private EthernetNetworkFactory mFactory;
     @Mock private INetd mNetd;
-    @Mock Resources mResources;
+    @Mock private EthernetTracker.Dependencies mDeps;
 
     @Before
     public void setUp() throws RemoteException {
@@ -83,7 +89,8 @@ public class EthernetTrackerTest {
         when(mNetd.interfaceGetList()).thenReturn(new String[0]);
         mHandlerThread = new HandlerThread(THREAD_NAME);
         mHandlerThread.start();
-        tracker = new EthernetTracker(mContext, mHandlerThread.getThreadHandler(), mFactory, mNetd);
+        tracker = new EthernetTracker(mContext, mHandlerThread.getThreadHandler(), mFactory, mNetd,
+                mDeps);
     }
 
     @After
@@ -92,9 +99,8 @@ public class EthernetTrackerTest {
     }
 
     private void initMockResources() {
-        doReturn("").when(mResources).getString(R.string.config_ethernet_iface_regex);
-        doReturn(new String[0]).when(mResources).getStringArray(R.array.config_ethernet_interfaces);
-        doReturn(mResources).when(mContext).getResources();
+        when(mDeps.getInterfaceRegexFromResource(eq(mContext))).thenReturn("");
+        when(mDeps.getInterfaceConfigFromResource(eq(mContext))).thenReturn(new String[0]);
     }
 
     private void waitForIdle() {
@@ -335,7 +341,7 @@ public class EthernetTrackerTest {
                 new StaticIpConfiguration.Builder().setIpAddress(linkAddr).build();
         final IpConfiguration ipConfig =
                 new IpConfiguration.Builder().setStaticIpConfiguration(staticIpConfig).build();
-        final IEthernetNetworkManagementListener listener = null;
+        final INetworkInterfaceOutcomeReceiver listener = null;
 
         tracker.updateConfiguration(TEST_IFACE, ipConfig, capabilities, listener);
         waitForIdle();
@@ -393,5 +399,58 @@ public class EthernetTrackerTest {
         final boolean isValidTestInterface = tracker.isValidTestInterface(validIfaceName);
 
         assertTrue(isValidTestInterface);
+    }
+
+    public static class EthernetStateListener extends IEthernetServiceListener.Stub {
+        @Override
+        public void onEthernetStateChanged(int state) { }
+
+        @Override
+        public void onInterfaceStateChanged(String iface, int state, int role,
+                IpConfiguration configuration) { }
+    }
+
+    @Test
+    public void testListenEthernetStateChange() throws Exception {
+        final String testIface = "testtap123";
+        final String testHwAddr = "11:22:33:44:55:66";
+        final InterfaceConfigurationParcel ifaceParcel = new InterfaceConfigurationParcel();
+        ifaceParcel.ifName = testIface;
+        ifaceParcel.hwAddr = testHwAddr;
+        ifaceParcel.flags = new String[] {INetd.IF_STATE_UP};
+
+        tracker.setIncludeTestInterfaces(true);
+        waitForIdle();
+
+        when(mNetd.interfaceGetList()).thenReturn(new String[] {testIface});
+        when(mNetd.interfaceGetCfg(eq(testIface))).thenReturn(ifaceParcel);
+        doReturn(new String[] {testIface}).when(mFactory).getAvailableInterfaces(anyBoolean());
+        doReturn(EthernetManager.STATE_LINK_UP).when(mFactory).getInterfaceState(eq(testIface));
+
+        final EthernetStateListener listener = spy(new EthernetStateListener());
+        tracker.addListener(listener, true /* canUseRestrictedNetworks */);
+        // Check default state.
+        waitForIdle();
+        verify(listener).onInterfaceStateChanged(eq(testIface), eq(EthernetManager.STATE_LINK_UP),
+                anyInt(), any());
+        verify(listener).onEthernetStateChanged(eq(EthernetManager.ETHERNET_STATE_ENABLED));
+        reset(listener);
+
+        doReturn(EthernetManager.STATE_ABSENT).when(mFactory).getInterfaceState(eq(testIface));
+        tracker.setEthernetEnabled(false);
+        waitForIdle();
+        verify(mFactory).removeInterface(eq(testIface));
+        verify(listener).onEthernetStateChanged(eq(EthernetManager.ETHERNET_STATE_DISABLED));
+        verify(listener).onInterfaceStateChanged(eq(testIface), eq(EthernetManager.STATE_ABSENT),
+                anyInt(), any());
+        reset(listener);
+
+        doReturn(EthernetManager.STATE_LINK_UP).when(mFactory).getInterfaceState(eq(testIface));
+        tracker.setEthernetEnabled(true);
+        waitForIdle();
+        verify(mFactory).addInterface(eq(testIface), eq(testHwAddr), any(), any());
+        verify(listener).onEthernetStateChanged(eq(EthernetManager.ETHERNET_STATE_ENABLED));
+        verify(listener).onInterfaceStateChanged(eq(testIface), eq(EthernetManager.STATE_LINK_UP),
+                anyInt(), any());
     }
 }
